@@ -14,9 +14,13 @@ from .utils import (
     resolve_optimizer,
     split_and_pad_trajectories,
     unpad_trajectories,
+    Normalizer,
+
 )
 
 __all__ = [
+    "AMPLoader",
+    "Normalizer",
     "check_nan",
     "get_param",
     "resolve_callable",
@@ -26,3 +30,7 @@ __all__ = [
     "split_and_pad_trajectories",
     "unpad_trajectories",
 ]
+from .motion_loader import AMPLoader
+from .amp_preflight import validate_amp_pipeline
+
+__all__.append("validate_amp_pipeline")
