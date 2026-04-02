@@ -67,6 +67,8 @@ class AmpOnPolicyRunner(OnPolicyRunner):
         amp_reward_coef = float(train_cfg.get("amp_reward_coef", 0.3))
         amp_discr_hidden_dims = train_cfg.get("amp_discr_hidden_dims", [1024, 512])
         amp_task_reward_lerp = float(train_cfg.get("amp_task_reward_lerp", 0.0))
+        amp_joint_pos_mode = str(train_cfg.get("amp_joint_pos_mode", "relative"))
+        amp_joint_pos_offset = train_cfg.get("amp_joint_pos_offset")
 
         amp_data = AMPLoader(
             device,
@@ -74,6 +76,8 @@ class AmpOnPolicyRunner(OnPolicyRunner):
             preload_transitions=True,
             num_preload_transitions=amp_num_preload_transitions,
             motion_files=motion_files,
+            joint_pos_mode=amp_joint_pos_mode,
+            joint_pos_offset=amp_joint_pos_offset,
         )
 
         if bool(train_cfg.get("amp_preflight_check", True)):

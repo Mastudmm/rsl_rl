@@ -46,6 +46,8 @@ class AMPLoader:
         preload_transitions=False,
         num_preload_transitions=1000000,
         motion_files=glob.glob("dataset/*.json") or glob.glob("datasets/motion_amp_expert/*"),
+        joint_pos_mode: str = "relative",
+        joint_pos_offset: list[float] | tuple[float, ...] | np.ndarray | None = None,
     ):
         """Expert dataset provides AMP observations from Dog mocap dataset.
 
@@ -53,6 +55,23 @@ class AMPLoader:
         """
         self.device = device
         self.time_between_frames = time_between_frames
+        if joint_pos_mode not in ("relative", "absolute"):
+            raise ValueError(
+                f"Unknown joint_pos_mode='{joint_pos_mode}'. Expected 'relative' or 'absolute'."
+            )
+
+        joint_pos_offset_arr = None
+        if joint_pos_mode == "absolute":
+            if joint_pos_offset is None:
+                raise ValueError(
+                    "joint_pos_mode='absolute' requires joint_pos_offset (12 values) to convert "
+                    "expert absolute joint angles into relative joint positions."
+                )
+            joint_pos_offset_arr = np.asarray(joint_pos_offset, dtype=np.float32).reshape(-1)
+            if joint_pos_offset_arr.shape[0] != AMPLoader.JOINT_POS_SIZE:
+                raise ValueError(
+                    f"joint_pos_offset must have {AMPLoader.JOINT_POS_SIZE} values, got {joint_pos_offset_arr.shape[0]}."
+                )
 
         # Values to store for each trajectory.
         self.trajectories = []
@@ -85,16 +104,21 @@ class AMPLoader:
                         f"{AMPLoader.END_POS_END_IDX + 7} (with root pose)."
                     )
 
+                amp_frame = motion_data[:, frame_start : frame_start + AMPLoader.END_POS_END_IDX].astype(np.float32)
+                if joint_pos_mode == "absolute":
+                    assert joint_pos_offset_arr is not None
+                    amp_frame[:, AMPLoader.JOINT_POSE_START_IDX : AMPLoader.JOINT_POSE_END_IDX] -= joint_pos_offset_arr
+
                 self.trajectories.append(
                     torch.tensor(
-                        motion_data[:, frame_start : frame_start + AMPLoader.END_POS_END_IDX],
+                        amp_frame,
                         dtype=torch.float32,
                         device=device,
                     )
                 )
                 self.trajectories_full.append(
                     torch.tensor(
-                        motion_data[:, frame_start : frame_start + AMPLoader.END_POS_END_IDX],
+                        amp_frame,
                         dtype=torch.float32,
                         device=device,
                     )
