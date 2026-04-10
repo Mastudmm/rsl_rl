@@ -165,7 +165,7 @@ class AmpOnPolicyRunner(OnPolicyRunner):
                     next_amp_obs_with_term = next_amp_obs.clone()
                     reset_env_ids = getattr(self.env, "reset_env_ids", None)
                     if reset_env_ids is not None and reset_env_ids.numel() > 0:
-                        terminal_amp_states = self.env.get_amp_obs_for_expert_trans()[reset_env_ids].to(self.device)
+                        terminal_amp_states = self.env.get_amp_obs_for_expert_trans(reset_env_ids).to(self.device)
                         next_amp_obs_with_term[reset_env_ids] = terminal_amp_states
 
                     # Replace task reward with AMP-combined reward used by PPO update.
