@@ -24,10 +24,13 @@ import torch
 
 
 class AMPLoader:
-       # 修改这里的数值
+    # AMP core kinematic features.
     JOINT_POS_SIZE = 12
     JOINT_VEL_SIZE = 12
     END_EFFECTOR_POS_SIZE = 12
+    ROOT_LIN_VEL_SIZE = 3
+    ROOT_ANG_VEL_SIZE = 3
+    ROOT_Z_SIZE = 1
 
     JOINT_POSE_START_IDX = 0
     JOINT_POSE_END_IDX = JOINT_POSE_START_IDX + JOINT_POS_SIZE
@@ -38,6 +41,18 @@ class AMPLoader:
     END_POS_START_IDX = JOINT_VEL_END_IDX
     END_POS_END_IDX = END_POS_START_IDX + END_EFFECTOR_POS_SIZE
 
+    ROOT_LIN_VEL_START_IDX = END_POS_END_IDX
+    ROOT_LIN_VEL_END_IDX = ROOT_LIN_VEL_START_IDX + ROOT_LIN_VEL_SIZE
+
+    ROOT_ANG_VEL_START_IDX = ROOT_LIN_VEL_END_IDX
+    ROOT_ANG_VEL_END_IDX = ROOT_ANG_VEL_START_IDX + ROOT_ANG_VEL_SIZE
+
+    ROOT_Z_START_IDX = ROOT_ANG_VEL_END_IDX
+    ROOT_Z_END_IDX = ROOT_Z_START_IDX + ROOT_Z_SIZE
+
+    LEGACY_OBS_END_IDX = END_POS_END_IDX
+    AMP_OBS_END_IDX = ROOT_Z_END_IDX
+
     def __init__(
         self,
         device,
@@ -46,6 +61,7 @@ class AMPLoader:
         preload_transitions=False,
         num_preload_transitions=1000000,
         motion_files=glob.glob("dataset/*.json") or glob.glob("datasets/motion_amp_expert/*"),
+        amp_obs_dim: int = 36,
         joint_pos_mode: str = "relative",
         joint_pos_offset: list[float] | tuple[float, ...] | np.ndarray | None = None,
     ):
@@ -55,6 +71,12 @@ class AMPLoader:
         """
         self.device = device
         self.time_between_frames = time_between_frames
+        if int(amp_obs_dim) not in (AMPLoader.LEGACY_OBS_END_IDX, AMPLoader.AMP_OBS_END_IDX):
+            raise ValueError(
+                f"Unsupported amp_obs_dim={amp_obs_dim}. "
+                f"Expected {AMPLoader.LEGACY_OBS_END_IDX} (legacy 36D) or {AMPLoader.AMP_OBS_END_IDX} (36+7)."
+            )
+        self.amp_obs_dim = int(amp_obs_dim)
         if joint_pos_mode not in ("relative", "absolute"):
             raise ValueError(
                 f"Unknown joint_pos_mode='{joint_pos_mode}'. Expected 'relative' or 'absolute'."
@@ -88,23 +110,14 @@ class AMPLoader:
             with open(motion_file) as f:
                 motion_json = json.load(f)
                 motion_data = np.array(motion_json["Frames"])
-                # Accept either:
-                #   1) AMP-only frame layout (no root pose): [joint_pos, joint_vel, end_effector_pos]
-                #   2) Root-prefixed layout: [root_pos(3), root_quat(4), joint_pos, joint_vel, end_effector_pos]
-                # and slice accordingly.
                 frame_dim = motion_data.shape[1]
-                if frame_dim == AMPLoader.END_POS_END_IDX:
-                    frame_start = 0
-                elif frame_dim == AMPLoader.END_POS_END_IDX + 7:
-                    frame_start = 7
-                else:
+                if frame_dim != self.amp_obs_dim:
                     raise ValueError(
                         f"Unexpected AMP frame dimension {frame_dim} in '{motion_file}'. "
-                        f"Expected {AMPLoader.END_POS_END_IDX} (no root) or "
-                        f"{AMPLoader.END_POS_END_IDX + 7} (with root pose)."
+                        f"Expected {self.amp_obs_dim} based on amp_obs_dim config."
                     )
+                amp_frame = motion_data[:, : self.amp_obs_dim].astype(np.float32)
 
-                amp_frame = motion_data[:, frame_start : frame_start + AMPLoader.END_POS_END_IDX].astype(np.float32)
                 if joint_pos_mode == "absolute":
                     assert joint_pos_offset_arr is not None
                     amp_frame[:, AMPLoader.JOINT_POSE_START_IDX : AMPLoader.JOINT_POSE_END_IDX] -= joint_pos_offset_arr
@@ -222,19 +235,19 @@ class AMPLoader:
         n = self.trajectory_num_frames[traj_idxs]
         idx_low, idx_high = np.floor(p * n).astype(np.int64), np.ceil(p * n).astype(np.int64)
         all_frame_amp_starts = torch.zeros(
-            len(traj_idxs), AMPLoader.END_POS_END_IDX - AMPLoader.JOINT_POSE_START_IDX, device=self.device
+            len(traj_idxs), self.amp_obs_dim - AMPLoader.JOINT_POSE_START_IDX, device=self.device
         )
         all_frame_amp_ends = torch.zeros(
-            len(traj_idxs), AMPLoader.END_POS_END_IDX - AMPLoader.JOINT_POSE_START_IDX, device=self.device
+            len(traj_idxs), self.amp_obs_dim - AMPLoader.JOINT_POSE_START_IDX, device=self.device
         )
         for traj_idx in set(traj_idxs):
             trajectory = self.trajectories_full[traj_idx]
             traj_mask = traj_idxs == traj_idx
             all_frame_amp_starts[traj_mask] = trajectory[idx_low[traj_mask]][
-                :, AMPLoader.JOINT_POSE_START_IDX : AMPLoader.END_POS_END_IDX
+                :, AMPLoader.JOINT_POSE_START_IDX : self.amp_obs_dim
             ]
             all_frame_amp_ends[traj_mask] = trajectory[idx_high[traj_mask]][
-                :, AMPLoader.JOINT_POSE_START_IDX : AMPLoader.END_POS_END_IDX
+                :, AMPLoader.JOINT_POSE_START_IDX : self.amp_obs_dim
             ]
         blend = torch.tensor(p * n - idx_low, device=self.device, dtype=torch.float32).unsqueeze(-1)
 
@@ -277,20 +290,35 @@ class AMPLoader:
         joints0, joints1 = AMPLoader.get_joint_pose(frame0), AMPLoader.get_joint_pose(frame1)
         joint_vel_0, joint_vel_1 = AMPLoader.get_joint_vel(frame0), AMPLoader.get_joint_vel(frame1)
         end_pos_0, end_pos_1 = AMPLoader.get_end_pos(frame0), AMPLoader.get_end_pos(frame1)
-
         blend_joint_q = self.slerp(joints0, joints1, blend)
         blend_joints_vel = self.slerp(joint_vel_0, joint_vel_1, blend)
         blend_end_pos = self.slerp(end_pos_0, end_pos_1, blend)
+        if self.amp_obs_dim == AMPLoader.LEGACY_OBS_END_IDX:
+            return torch.cat([blend_joint_q, blend_joints_vel, blend_end_pos])
 
-        return torch.cat([blend_joint_q, blend_joints_vel, blend_end_pos])
+        root_lin_vel_0, root_lin_vel_1 = AMPLoader.get_root_lin_vel(frame0), AMPLoader.get_root_lin_vel(frame1)
+        root_ang_vel_0, root_ang_vel_1 = AMPLoader.get_root_ang_vel(frame0), AMPLoader.get_root_ang_vel(frame1)
+        root_z_0, root_z_1 = AMPLoader.get_root_z(frame0), AMPLoader.get_root_z(frame1)
+        blend_root_lin_vel = self.slerp(root_lin_vel_0, root_lin_vel_1, blend)
+        blend_root_ang_vel = self.slerp(root_ang_vel_0, root_ang_vel_1, blend)
+        blend_root_z = self.slerp(root_z_0, root_z_1, blend)
+
+        return torch.cat([
+            blend_joint_q,
+            blend_joints_vel,
+            blend_end_pos,
+            blend_root_lin_vel,
+            blend_root_ang_vel,
+            blend_root_z,
+        ])
 
     def feed_forward_generator(self, num_mini_batch, mini_batch_size):
         """Generates a batch of AMP transitions."""
         for _ in range(num_mini_batch):
             if self.preload_transitions:
                 idxs = np.random.choice(self.preloaded_s.shape[0], size=mini_batch_size)
-                s = self.preloaded_s[idxs, AMPLoader.JOINT_POSE_START_IDX : AMPLoader.END_POS_END_IDX]
-                s_next = self.preloaded_s_next[idxs, AMPLoader.JOINT_POSE_START_IDX : AMPLoader.END_POS_END_IDX]
+                s = self.preloaded_s[idxs, AMPLoader.JOINT_POSE_START_IDX : self.amp_obs_dim]
+                s_next = self.preloaded_s_next[idxs, AMPLoader.JOINT_POSE_START_IDX : self.amp_obs_dim]
             else:
                 s, s_next = [], []
                 traj_idxs = self.weighted_traj_idx_sample_batch(mini_batch_size)
@@ -335,3 +363,27 @@ class AMPLoader:
     @staticmethod
     def get_end_pos_batch(poses):
         return poses[:, AMPLoader.END_POS_START_IDX : AMPLoader.END_POS_END_IDX]
+
+    @staticmethod
+    def get_root_lin_vel(pose):
+        return pose[AMPLoader.ROOT_LIN_VEL_START_IDX : AMPLoader.ROOT_LIN_VEL_END_IDX]
+
+    @staticmethod
+    def get_root_lin_vel_batch(poses):
+        return poses[:, AMPLoader.ROOT_LIN_VEL_START_IDX : AMPLoader.ROOT_LIN_VEL_END_IDX]
+
+    @staticmethod
+    def get_root_ang_vel(pose):
+        return pose[AMPLoader.ROOT_ANG_VEL_START_IDX : AMPLoader.ROOT_ANG_VEL_END_IDX]
+
+    @staticmethod
+    def get_root_ang_vel_batch(poses):
+        return poses[:, AMPLoader.ROOT_ANG_VEL_START_IDX : AMPLoader.ROOT_ANG_VEL_END_IDX]
+
+    @staticmethod
+    def get_root_z(pose):
+        return pose[AMPLoader.ROOT_Z_START_IDX : AMPLoader.ROOT_Z_END_IDX]
+
+    @staticmethod
+    def get_root_z_batch(poses):
+        return poses[:, AMPLoader.ROOT_Z_START_IDX : AMPLoader.ROOT_Z_END_IDX]

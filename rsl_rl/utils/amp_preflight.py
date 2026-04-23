@@ -78,10 +78,10 @@ def validate_amp_pipeline(
             raise ValueError(f"AMP preflight failed: '{path}' frame must be a list.")
 
         frame_dim = len(frame0)
-        if frame_dim not in (expert_obs_dim, expert_obs_dim + 7):
+        if frame_dim != expert_obs_dim:
             raise ValueError(
                 f"AMP preflight failed: '{path}' frame dim={frame_dim}, "
-                f"expected {expert_obs_dim} or {expert_obs_dim + 7}."
+                f"expected {expert_obs_dim}."
             )
 
         sample = torch.tensor(frame0, dtype=torch.float32)

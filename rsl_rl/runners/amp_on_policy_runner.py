@@ -67,8 +67,21 @@ class AmpOnPolicyRunner(OnPolicyRunner):
         amp_reward_coef = float(train_cfg.get("amp_reward_coef", 0.3))
         amp_discr_hidden_dims = train_cfg.get("amp_discr_hidden_dims", [1024, 512])
         amp_task_reward_lerp = float(train_cfg.get("amp_task_reward_lerp", 0.0))
+        amp_expected_obs_dim = int(train_cfg.get("amp_expected_obs_dim", 36))
         amp_joint_pos_mode = str(train_cfg.get("amp_joint_pos_mode", "relative"))
         amp_joint_pos_offset = train_cfg.get("amp_joint_pos_offset")
+
+        # Register AMP observation layout in env wrapper so policy-side AMP obs
+        # follows the configured dimension/order.
+        if hasattr(self.env, "set_amp_obs_dim"):
+            self.env.set_amp_obs_dim(amp_expected_obs_dim)
+        elif hasattr(self.env, "amp_obs_dim"):
+            self.env.amp_obs_dim = amp_expected_obs_dim
+        else:
+            raise TypeError(
+                "AmpOnPolicyRunner requires env wrapper support for configurable AMP obs dim "
+                "(set_amp_obs_dim or amp_obs_dim attribute)."
+            )
 
         amp_data = AMPLoader(
             device,
@@ -76,6 +89,7 @@ class AmpOnPolicyRunner(OnPolicyRunner):
             preload_transitions=True,
             num_preload_transitions=amp_num_preload_transitions,
             motion_files=motion_files,
+            amp_obs_dim=amp_expected_obs_dim,
             joint_pos_mode=amp_joint_pos_mode,
             joint_pos_offset=amp_joint_pos_offset,
         )
@@ -87,7 +101,7 @@ class AmpOnPolicyRunner(OnPolicyRunner):
                 amp_data,
                 strict=bool(train_cfg.get("amp_preflight_strict", True)),
                 max_files_to_scan=int(train_cfg.get("amp_preflight_max_files", 8)),
-                expected_obs_dim=train_cfg.get("amp_expected_obs_dim"),
+                expected_obs_dim=amp_expected_obs_dim,
             )
             print(
                 "[AMP preflight] OK "
