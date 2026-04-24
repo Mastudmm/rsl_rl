@@ -6,6 +6,8 @@ from typing import Any
 
 import torch
 
+from .motion_loader import AMPLoader
+
 
 def validate_amp_pipeline(
     env: Any,
@@ -78,7 +80,16 @@ def validate_amp_pipeline(
             raise ValueError(f"AMP preflight failed: '{path}' frame must be a list.")
 
         frame_dim = len(frame0)
-        if frame_dim != expert_obs_dim:
+        if expert_obs_dim == AMPLoader.ROOT_Z_ONLY_OBS_END_IDX:
+            # 37D training mode can consume either 37D frames directly or 43D
+            # frames (with runtime filtering of root velocity terms).
+            if frame_dim not in (AMPLoader.ROOT_Z_ONLY_OBS_END_IDX, AMPLoader.AMP_OBS_END_IDX):
+                raise ValueError(
+                    f"AMP preflight failed: '{path}' frame dim={frame_dim}, "
+                    f"expected {AMPLoader.ROOT_Z_ONLY_OBS_END_IDX} or {AMPLoader.AMP_OBS_END_IDX} "
+                    "for amp_obs_dim=37."
+                )
+        elif frame_dim != expert_obs_dim:
             raise ValueError(
                 f"AMP preflight failed: '{path}' frame dim={frame_dim}, "
                 f"expected {expert_obs_dim}."

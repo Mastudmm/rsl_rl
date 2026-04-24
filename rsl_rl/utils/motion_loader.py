@@ -25,6 +25,18 @@ import torch
 
 class AMPLoader:
     # AMP core kinematic features.
+    # Dimension conventions here MUST stay aligned with:
+    # - mjlab/rl/vecenv_wrapper.py:get_amp_obs_for_expert_trans (policy-side AMP obs)
+    # - dataset export scripts that generate expert Frames
+    #
+    # Legacy 36D order:
+    #   joint_pos_rel(12) + joint_vel_rel(12) + foot_pos_b_xyz(12)
+    #
+    # Root-z only 37D order:
+    #   legacy_36 + root_z(1)
+    #
+    # Extended 43D order:
+    #   legacy_36 + root_lin_vel_b(3) + root_ang_vel_b(3) + root_z(1)
     JOINT_POS_SIZE = 12
     JOINT_VEL_SIZE = 12
     END_EFFECTOR_POS_SIZE = 12
@@ -51,6 +63,7 @@ class AMPLoader:
     ROOT_Z_END_IDX = ROOT_Z_START_IDX + ROOT_Z_SIZE
 
     LEGACY_OBS_END_IDX = END_POS_END_IDX
+    ROOT_Z_ONLY_OBS_END_IDX = LEGACY_OBS_END_IDX + ROOT_Z_SIZE
     AMP_OBS_END_IDX = ROOT_Z_END_IDX
 
     def __init__(
@@ -65,16 +78,28 @@ class AMPLoader:
         joint_pos_mode: str = "relative",
         joint_pos_offset: list[float] | tuple[float, ...] | np.ndarray | None = None,
     ):
-        """Expert dataset provides AMP observations from Dog mocap dataset.
+        """Load expert AMP trajectories from JSON frames.
 
-        time_between_frames: Amount of time in seconds between transition.
+        Args:
+            time_between_frames: Delta time used to sample (s, s_next) transitions.
+            amp_obs_dim: Selects expected frame layout (36 legacy, 37 root_z-only, or 43 extended).
+            joint_pos_mode:
+                - "relative": frame joint_pos is already relative (no offset subtraction)
+                - "absolute": subtract joint_pos_offset to convert absolute -> relative
         """
         self.device = device
         self.time_between_frames = time_between_frames
-        if int(amp_obs_dim) not in (AMPLoader.LEGACY_OBS_END_IDX, AMPLoader.AMP_OBS_END_IDX):
+        if int(amp_obs_dim) not in (
+            AMPLoader.LEGACY_OBS_END_IDX,
+            AMPLoader.ROOT_Z_ONLY_OBS_END_IDX,
+            AMPLoader.AMP_OBS_END_IDX,
+        ):
             raise ValueError(
                 f"Unsupported amp_obs_dim={amp_obs_dim}. "
-                f"Expected {AMPLoader.LEGACY_OBS_END_IDX} (legacy 36D) or {AMPLoader.AMP_OBS_END_IDX} (36+7)."
+                "Expected "
+                f"{AMPLoader.LEGACY_OBS_END_IDX} (legacy 36D), "
+                f"{AMPLoader.ROOT_Z_ONLY_OBS_END_IDX} (36+root_z), or "
+                f"{AMPLoader.AMP_OBS_END_IDX} (36+7)."
             )
         self.amp_obs_dim = int(amp_obs_dim)
         if joint_pos_mode not in ("relative", "absolute"):
@@ -109,14 +134,11 @@ class AMPLoader:
             self.trajectory_names.append(motion_file.split(".")[0])
             with open(motion_file) as f:
                 motion_json = json.load(f)
+                # Frames are expected to be AMP observation vectors in one of the
+                # supported source layouts; no kinematic solving is done here.
                 motion_data = np.array(motion_json["Frames"])
                 frame_dim = motion_data.shape[1]
-                if frame_dim != self.amp_obs_dim:
-                    raise ValueError(
-                        f"Unexpected AMP frame dimension {frame_dim} in '{motion_file}'. "
-                        f"Expected {self.amp_obs_dim} based on amp_obs_dim config."
-                    )
-                amp_frame = motion_data[:, : self.amp_obs_dim].astype(np.float32)
+                amp_frame = self._adapt_motion_frames(motion_data, frame_dim, motion_file)
 
                 if joint_pos_mode == "absolute":
                     assert joint_pos_offset_arr is not None
@@ -165,6 +187,45 @@ class AMPLoader:
             print("Finished preloading")
 
         self.all_trajectories_full = torch.vstack(self.trajectories_full)
+
+    def _adapt_motion_frames(self, motion_data: np.ndarray, frame_dim: int, motion_file: str) -> np.ndarray:
+        """Adapt source dataset frame layout to the configured AMP observation layout."""
+        if self.amp_obs_dim == AMPLoader.LEGACY_OBS_END_IDX:
+            if frame_dim != AMPLoader.LEGACY_OBS_END_IDX:
+                raise ValueError(
+                    f"Unexpected AMP frame dimension {frame_dim} in '{motion_file}'. "
+                    f"Expected {AMPLoader.LEGACY_OBS_END_IDX} for amp_obs_dim=36."
+                )
+            return motion_data[:, : AMPLoader.LEGACY_OBS_END_IDX].astype(np.float32)
+
+        if self.amp_obs_dim == AMPLoader.ROOT_Z_ONLY_OBS_END_IDX:
+            # Keep dataset unchanged (43D), but drop root linear/angular velocity
+            # during extraction: [0:36] + [42:43] -> 37D.
+            if frame_dim == AMPLoader.AMP_OBS_END_IDX:
+                return np.concatenate(
+                    [
+                        motion_data[:, : AMPLoader.LEGACY_OBS_END_IDX],
+                        motion_data[:, AMPLoader.ROOT_Z_START_IDX : AMPLoader.ROOT_Z_END_IDX],
+                    ],
+                    axis=1,
+                ).astype(np.float32)
+            if frame_dim == AMPLoader.ROOT_Z_ONLY_OBS_END_IDX:
+                return motion_data[:, : AMPLoader.ROOT_Z_ONLY_OBS_END_IDX].astype(np.float32)
+            raise ValueError(
+                f"Unexpected AMP frame dimension {frame_dim} in '{motion_file}'. "
+                f"Expected {AMPLoader.AMP_OBS_END_IDX} (source 43D) or "
+                f"{AMPLoader.ROOT_Z_ONLY_OBS_END_IDX} (source 37D) for amp_obs_dim=37."
+            )
+
+        if self.amp_obs_dim == AMPLoader.AMP_OBS_END_IDX:
+            if frame_dim != AMPLoader.AMP_OBS_END_IDX:
+                raise ValueError(
+                    f"Unexpected AMP frame dimension {frame_dim} in '{motion_file}'. "
+                    f"Expected {AMPLoader.AMP_OBS_END_IDX} for amp_obs_dim=43."
+                )
+            return motion_data[:, : AMPLoader.AMP_OBS_END_IDX].astype(np.float32)
+
+        raise ValueError(f"Unsupported amp_obs_dim={self.amp_obs_dim}.")
 
     def weighted_traj_idx_sample(self):
         """Get traj idx via weighted sampling."""
@@ -295,6 +356,12 @@ class AMPLoader:
         blend_end_pos = self.slerp(end_pos_0, end_pos_1, blend)
         if self.amp_obs_dim == AMPLoader.LEGACY_OBS_END_IDX:
             return torch.cat([blend_joint_q, blend_joints_vel, blend_end_pos])
+
+        if self.amp_obs_dim == AMPLoader.ROOT_Z_ONLY_OBS_END_IDX:
+            root_z_0 = frame0[AMPLoader.LEGACY_OBS_END_IDX : AMPLoader.ROOT_Z_ONLY_OBS_END_IDX]
+            root_z_1 = frame1[AMPLoader.LEGACY_OBS_END_IDX : AMPLoader.ROOT_Z_ONLY_OBS_END_IDX]
+            blend_root_z = self.slerp(root_z_0, root_z_1, blend)
+            return torch.cat([blend_joint_q, blend_joints_vel, blend_end_pos, blend_root_z])
 
         root_lin_vel_0, root_lin_vel_1 = AMPLoader.get_root_lin_vel(frame0), AMPLoader.get_root_lin_vel(frame1)
         root_ang_vel_0, root_ang_vel_1 = AMPLoader.get_root_ang_vel(frame0), AMPLoader.get_root_ang_vel(frame1)
