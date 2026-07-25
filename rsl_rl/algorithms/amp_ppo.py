@@ -217,6 +217,8 @@ class AMPPPO(PPO):
             # --- COMPLETING AMP DISCRIMINATOR LOSS ---
             policy_state, policy_next_state = sample_amp_policy
             expert_state, expert_next_state = sample_amp_expert
+            policy_state_unnorm = policy_state  # raw copy for normalizer update
+            expert_state_unnorm = expert_state
             
             if self.amp_normalizer is not None:
                 with torch.no_grad():
@@ -268,8 +270,8 @@ class AMPPPO(PPO):
 
             # Update AMP normalizers
             if self.amp_normalizer is not None:
-                self.amp_normalizer.update(policy_state.detach().cpu().numpy())
-                self.amp_normalizer.update(expert_state.detach().cpu().numpy())
+                self.amp_normalizer.update(policy_state_unnorm.detach().cpu().numpy())
+                self.amp_normalizer.update(expert_state_unnorm.detach().cpu().numpy())
 
             # Metrics
             mean_value_loss += value_loss.item()
