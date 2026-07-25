@@ -477,6 +477,13 @@ class PPO:
         actor_class: type[MLPModel] = resolve_callable(cfg["actor"].pop("class_name"))  # type: ignore
         critic_class: type[MLPModel] = resolve_callable(cfg["critic"].pop("class_name"))  # type: ignore
 
+        # Inject observation_manager for models that declare _needs_obs_manager
+        # (e.g. HierarchicalMLPModel auto-slices obs by term layout).
+        _obs_manager = env.unwrapped.observation_manager
+        for _set, _cls in (("actor", actor_class), ("critic", critic_class)):
+            if getattr(_cls, "_needs_obs_manager", False):
+                cfg[_set]["observation_manager"] = _obs_manager
+
         # Resolve observation groups
         default_sets = ["actor", "critic"]
         if "rnd_cfg" in cfg["algorithm"] and cfg["algorithm"]["rnd_cfg"] is not None:
@@ -496,6 +503,10 @@ class PPO:
             cfg["critic"]["cnns"] = actor.cnns  # type: ignore
         critic: MLPModel = critic_class(obs, cfg["obs_groups"], "critic", 1, **cfg["critic"]).to(device)
         print(f"Critic Model: {critic}")
+
+        # Clean up transient observation_manager so it doesn't leak into dumped cfg.
+        cfg["actor"].pop("observation_manager", None)
+        cfg["critic"].pop("observation_manager", None)
 
         # Initialize the storage
         storage = RolloutStorage("rl", env.num_envs, cfg["num_steps_per_env"], obs, [env.num_actions], device)
