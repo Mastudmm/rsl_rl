@@ -37,6 +37,8 @@ class MLPModel(nn.Module):
         activation: str = "elu",
         obs_normalization: bool = False,
         distribution_cfg: dict | None = None,
+        cnn_cfg: dict | None = None,
+        class_name: str = "MLPModel",
     ) -> None:
         """Initialize the MLP-based model.
 
@@ -50,7 +52,13 @@ class MLPModel(nn.Module):
             obs_normalization: Whether to normalize the observations before feeding them to the MLP.
             distribution_cfg: Configuration dictionary for the output distribution. If provided, the model outputs
                 stochastic values sampled from the distribution.
+            cnn_cfg: Accepted for mjlab ``RslRlModelCfg`` compatibility. Must be None for MLPModel
+                (a set ``cnn_cfg`` requires a CNN-based model class).
+            class_name: Accepted for mjlab ``RslRlModelCfg`` compatibility (class resolution
+                already happened before construction).
         """
+        if cnn_cfg is not None:
+            raise ValueError("cnn_cfg is set but the model class is MLPModel; use a CNN-based model class.")
         super().__init__()
 
         # Resolve observation groups and dimensions

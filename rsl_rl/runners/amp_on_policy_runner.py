@@ -1,17 +1,16 @@
 from __future__ import annotations
 
+import glob
 import os
 import time
-import glob
 import torch
 
 from rsl_rl.algorithms import AMPPPO
 from rsl_rl.env import VecEnv
-from rsl_rl.models import MLPModel
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
-from rsl_rl.utils import check_nan, resolve_callable
+from rsl_rl.utils import AMPLoader, Normalizer, check_nan, resolve_callable, validate_amp_pipeline
 from rsl_rl.utils.logger import Logger
-from rsl_rl.utils import AMPLoader, Normalizer, validate_amp_pipeline
+
 
 class AmpOnPolicyRunner(OnPolicyRunner):
     """On-policy runner for AMP reinforcement learning algorithms."""
@@ -24,8 +23,7 @@ class AmpOnPolicyRunner(OnPolicyRunner):
         self.env = env
         if not hasattr(self.env, "get_amp_obs_for_expert_trans"):
             raise TypeError(
-                "AmpOnPolicyRunner requires an AMP-capable env wrapper with "
-                "get_amp_obs_for_expert_trans()."
+                "AmpOnPolicyRunner requires an AMP-capable env wrapper with get_amp_obs_for_expert_trans()."
             )
         if not hasattr(self.env, "amp_enabled"):
             raise TypeError(
@@ -35,7 +33,7 @@ class AmpOnPolicyRunner(OnPolicyRunner):
         self.env.amp_enabled = True
         self.cfg = train_cfg
         self.device = device
-        
+
         self._configure_multi_gpu()
         obs = self.env.get_observations()
 
@@ -111,9 +109,10 @@ class AmpOnPolicyRunner(OnPolicyRunner):
             )
 
         amp_normalizer = Normalizer(amp_data.observation_dim)
-        
+
         # Instantiate Discriminator (Assumes Discriminator model is provided by rsl_rl.models)
         from rsl_rl.models.discriminator import Discriminator
+
         discriminator = Discriminator(
             amp_data.observation_dim * 2,
             amp_reward_coef,
@@ -123,7 +122,9 @@ class AmpOnPolicyRunner(OnPolicyRunner):
         ).to(device)
 
         alg_class: type[AMPPPO] = resolve_callable(self.cfg["algorithm"]["class_name"])
-        self.alg = alg_class.construct_algorithm(obs, self.env, self.cfg, self.device, discriminator, amp_data, amp_normalizer)
+        self.alg = alg_class.construct_algorithm(
+            obs, self.env, self.cfg, self.device, discriminator, amp_data, amp_normalizer
+        )
 
         self.logger = Logger(
             log_dir=log_dir,
@@ -142,17 +143,19 @@ class AmpOnPolicyRunner(OnPolicyRunner):
         """Run the learning loop for the specified number of iterations with AMP observations."""
         # Overrides standard PPO learn loop to include amp_obs processing and logging
         if init_at_random_ep_len:
-            self.env.episode_length_buf = torch.randint_like(self.env.episode_length_buf, high=int(self.env.max_episode_length))
-        
+            self.env.episode_length_buf = torch.randint_like(
+                self.env.episode_length_buf, high=int(self.env.max_episode_length)
+            )
+
         obs = self.env.get_observations().to(self.device)
         # Fetch initial AMP obs from the environment
         amp_obs = self.env.get_amp_obs_for_expert_trans().to(self.device)
-        
+
         self.alg.train_mode()
-        
+
         if self.is_distributed:
             self.alg.broadcast_parameters()
-            
+
         self.logger.init_logging_writer()
 
         start_it = self.current_learning_iteration
@@ -166,10 +169,10 @@ class AmpOnPolicyRunner(OnPolicyRunner):
                     next_amp_obs = extras.get("amp_obs")
                     if next_amp_obs is None:
                         next_amp_obs = self.env.get_amp_obs_for_expert_trans()
-                    
+
                     if self.cfg.get("check_for_nan", True):
                         check_nan(obs, rewards, dones)
-                        
+
                     obs = obs.to(self.device)
                     rewards = rewards.to(self.device)
                     dones = dones.to(self.device)
@@ -192,7 +195,7 @@ class AmpOnPolicyRunner(OnPolicyRunner):
 
                     self.alg.process_env_step(obs, rewards, dones, extras, next_amp_obs_with_term)
                     amp_obs = next_amp_obs.clone()
-                    
+
                     intrinsic_rewards = self.alg.intrinsic_rewards if self.cfg["algorithm"].get("rnd_cfg") else None
                     self.logger.process_env_step(rewards, dones, extras, intrinsic_rewards)
 
@@ -202,11 +205,11 @@ class AmpOnPolicyRunner(OnPolicyRunner):
                 self.alg.compute_returns(obs)
 
             loss_dict = self.alg.update()
-            
+
             stop = time.time()
             learn_time = stop - start
             self.current_learning_iteration = it
-            
+
             self.logger.log(
                 it=it,
                 start_it=start_it,

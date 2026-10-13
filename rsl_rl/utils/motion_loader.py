@@ -18,7 +18,6 @@
 
 import glob
 import json
-
 import numpy as np
 import torch
 
@@ -103,9 +102,7 @@ class AMPLoader:
             )
         self.amp_obs_dim = int(amp_obs_dim)
         if joint_pos_mode not in ("relative", "absolute"):
-            raise ValueError(
-                f"Unknown joint_pos_mode='{joint_pos_mode}'. Expected 'relative' or 'absolute'."
-            )
+            raise ValueError(f"Unknown joint_pos_mode='{joint_pos_mode}'. Expected 'relative' or 'absolute'.")
 
         joint_pos_offset_arr = None
         if joint_pos_mode == "absolute":
@@ -344,10 +341,10 @@ class AMPLoader:
             frame1: Second frame to be blended corresponds to (blend = 1).
             blend: Float between [0, 1], specifying the interpolation between
             the two frames.
+
         Returns:
             An interpolation of the two frames.
         """
-
         joints0, joints1 = AMPLoader.get_joint_pose(frame0), AMPLoader.get_joint_pose(frame1)
         joint_vel_0, joint_vel_1 = AMPLoader.get_joint_vel(frame0), AMPLoader.get_joint_vel(frame1)
         end_pos_0, end_pos_1 = AMPLoader.get_end_pos(frame0), AMPLoader.get_end_pos(frame1)

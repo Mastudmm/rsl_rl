@@ -6,6 +6,7 @@
 """Helper functions."""
 
 from .utils import (
+    Normalizer,
     check_nan,
     get_param,
     resolve_callable,
@@ -14,8 +15,6 @@ from .utils import (
     resolve_optimizer,
     split_and_pad_trajectories,
     unpad_trajectories,
-    Normalizer,
-
 )
 
 __all__ = [
@@ -30,7 +29,7 @@ __all__ = [
     "split_and_pad_trajectories",
     "unpad_trajectories",
 ]
-from .motion_loader import AMPLoader
 from .amp_preflight import validate_amp_pipeline
+from .motion_loader import AMPLoader
 
 __all__.append("validate_amp_pipeline")

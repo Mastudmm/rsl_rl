@@ -163,6 +163,11 @@ def resolve_callable(callable_or_name: type | Callable | str) -> Callable:
 
     # Simple name - look for it in rsl_rl
     for _, module_name, _ in pkgutil.iter_modules(rsl_rl.__path__, "rsl_rl."):
+        if module_name == "rsl_rl.setup":
+            # Packaging helper (src/rsl_rl/setup.py): importing it invokes
+            # setuptools.setup(), which parses sys.argv and calls sys.exit
+            # (SystemExit escapes the `except Exception` below).
+            continue
         try:
             module = importlib.import_module(module_name)
         except Exception:
@@ -383,8 +388,9 @@ def unpad_trajectories(trajectories: torch.Tensor | TensorDict, masks: torch.Ten
         # For standard Tensors, we must explicitly handle feature dimensions in view()
         return valid_steps.view(-1, trajectories.shape[0], *trajectories.shape[2:]).transpose(1, 0)
 
+
 import numpy as np
-import torch
+
 
 class RunningMeanStd:
     def __init__(self, epsilon: float = 1e-4, shape: tuple = ()):
@@ -409,6 +415,7 @@ class RunningMeanStd:
         self.mean = new_mean
         self.var = new_var
         self.count = self.count + batch_count
+
 
 class Normalizer(RunningMeanStd):
     def __init__(self, input_dim, epsilon=1e-4, clip_obs=10.0):

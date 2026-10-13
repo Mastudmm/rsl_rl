@@ -25,6 +25,7 @@ class ReplayBuffer:
 
     def __init__(self, obs_dim, buffer_size, device):
         """Initialize a ReplayBuffer object.
+
         Arguments:
             buffer_size (int): maximum size of buffer
         """
@@ -38,7 +39,6 @@ class ReplayBuffer:
 
     def insert(self, states, next_states):
         """Add new states to memory."""
-
         num_states = states.shape[0]
         start_idx = self.step
         end_idx = self.step + num_states

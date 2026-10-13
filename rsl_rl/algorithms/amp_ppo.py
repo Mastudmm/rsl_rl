@@ -3,22 +3,23 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from itertools import chain
-from typing import Any
 from tensordict import TensorDict
+from typing import Any
 
 from rsl_rl.algorithms.ppo import PPO
 from rsl_rl.env import VecEnv
 from rsl_rl.extensions import resolve_rnd_config, resolve_symmetry_config
 from rsl_rl.models import MLPModel
-from rsl_rl.storage import RolloutStorage, ReplayBuffer
+from rsl_rl.storage import ReplayBuffer, RolloutStorage
 from rsl_rl.utils import resolve_callable, resolve_obs_groups, resolve_optimizer
 
+
 class AMPPPO(PPO):
-    """
-    AMP PPO logic adapted for RSL-RL v5.0.1.
+    """AMP PPO logic adapted for RSL-RL v5.0.1.
     Inherits from standard v5.0.1 PPO and implements the complete Adversarial Motion Priors training loop,
     including full support for RND and Symmetry data augmentation logic natively supported in v5.0.1.
     """
+
     def __init__(
         self,
         actor: MLPModel,
@@ -29,7 +30,7 @@ class AMPPPO(PPO):
         amp_normalizer,
         amp_replay_buffer_size: int = 100000,
         min_std: torch.Tensor | None = None,
-        **kwargs
+        **kwargs,
     ) -> None:
         # Initialize standard PPO (which handles RND, Symmetry, storage, standard optimizer prep)
         super().__init__(actor, critic, storage, **kwargs)
@@ -38,7 +39,7 @@ class AMPPPO(PPO):
             raise ValueError("AMPPPO requires a valid discriminator instance.")
         if amp_data is None:
             raise ValueError("AMPPPO requires amp_data for expert transitions.")
-        
+
         # Override optimizer to explicitly include discriminator parameters
         optimizer_name = kwargs.get("optimizer", "adam")
         optimizer_cls = resolve_optimizer(optimizer_name)
@@ -61,7 +62,7 @@ class AMPPPO(PPO):
         self._last_amp_obs: torch.Tensor | None = None
         amp_obs_dim = int(self.discriminator.input_dim // 2)
         self.amp_storage = ReplayBuffer(amp_obs_dim, amp_replay_buffer_size, self.device)
-        
+
     def act(self, obs: TensorDict, amp_obs: torch.Tensor | None = None) -> torch.Tensor:
         """Sample actions and store transition data including amp observations."""
         actions = super().act(obs)
@@ -70,7 +71,12 @@ class AMPPPO(PPO):
         return actions
 
     def process_env_step(
-        self, obs: TensorDict, rewards: torch.Tensor, dones: torch.Tensor, extras: dict[str, torch.Tensor], amp_obs: torch.Tensor | None = None
+        self,
+        obs: TensorDict,
+        rewards: torch.Tensor,
+        dones: torch.Tensor,
+        extras: dict[str, torch.Tensor],
+        amp_obs: torch.Tensor | None = None,
     ) -> None:
         """Record one environment step and update the normalizers and amp buffers."""
         super().process_env_step(obs, rewards, dones, extras)
@@ -219,33 +225,33 @@ class AMPPPO(PPO):
             expert_state, expert_next_state = sample_amp_expert
             policy_state_unnorm = policy_state  # raw copy for normalizer update
             expert_state_unnorm = expert_state
-            
+
             if self.amp_normalizer is not None:
                 with torch.no_grad():
                     policy_state = self.amp_normalizer.normalize_torch(policy_state, self.device)
                     policy_next_state = self.amp_normalizer.normalize_torch(policy_next_state, self.device)
                     expert_state = self.amp_normalizer.normalize_torch(expert_state, self.device)
                     expert_next_state = self.amp_normalizer.normalize_torch(expert_next_state, self.device)
-            
+
             # Predict labels for (s, s') pairs
             policy_d = self.discriminator(torch.cat([policy_state, policy_next_state], dim=-1))
             expert_d = self.discriminator(torch.cat([expert_state, expert_next_state], dim=-1))
-            
+
             # Expert wants to be pushed to 1, Policy pseudo-agent to -1
             expert_loss = torch.nn.MSELoss()(expert_d, torch.ones(expert_d.size(), device=self.device))
             policy_loss = torch.nn.MSELoss()(policy_d, -1 * torch.ones(policy_d.size(), device=self.device))
             amp_loss = 0.5 * (expert_loss + policy_loss)
-            
+
             # Gradient penalty formulation
             grad_pen_loss = self.discriminator.compute_grad_pen(expert_state, expert_next_state, lambda_=10)
-            
+
             # Add to total loss
             loss += self.amploss_coef * amp_loss + self.amploss_coef * grad_pen_loss
 
             # Optimization Steps
             self.optimizer.zero_grad()
             loss.backward()
-            
+
             if self.rnd:
                 self.rnd_optimizer.zero_grad()
                 rnd_loss.backward()
@@ -264,7 +270,7 @@ class AMPPPO(PPO):
                         self.actor.distribution.std_param.data = torch.maximum(  # type: ignore[attr-defined]
                             self.actor.distribution.std_param.data, min_std
                         )
-            
+
             if self.rnd_optimizer:
                 self.rnd_optimizer.step()
 
@@ -298,7 +304,7 @@ class AMPPPO(PPO):
             mean_rnd_loss /= num_updates
         if mean_symmetry_loss is not None:
             mean_symmetry_loss /= num_updates
-        
+
         self.storage.clear()
 
         loss_dict = {
@@ -314,7 +320,7 @@ class AMPPPO(PPO):
             loss_dict["rnd"] = mean_rnd_loss
         if self.symmetry:
             loss_dict["symmetry"] = mean_symmetry_loss
-        
+
         return loss_dict
 
     def train_mode(self) -> None:
@@ -345,7 +351,7 @@ class AMPPPO(PPO):
         all_params = chain(self.actor.parameters(), self.critic.parameters(), self.discriminator.parameters())
         if self.rnd:
             all_params = chain(all_params, self.rnd.parameters())
-            
+
         all_params = list(all_params)
         grads = [param.grad.view(-1) for param in all_params if param.grad is not None]
         if not grads:
@@ -426,16 +432,15 @@ class AMPPPO(PPO):
         storage = RolloutStorage("rl", env.num_envs, cfg["num_steps_per_env"], obs, [env.num_actions], device)
 
         alg: AMPPPO = alg_class(
-            actor=actor, 
-            critic=critic, 
+            actor=actor,
+            critic=critic,
             discriminator=discriminator,
-            storage=storage, 
+            storage=storage,
             amp_data=amp_data,
             amp_normalizer=amp_normalizer,
-            device=device, 
-            **cfg["algorithm"], 
-            multi_gpu_cfg=cfg["multi_gpu"]
+            device=device,
+            **cfg["algorithm"],
+            multi_gpu_cfg=cfg["multi_gpu"],
         )
 
         return alg
-

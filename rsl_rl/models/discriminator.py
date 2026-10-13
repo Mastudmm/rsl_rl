@@ -4,8 +4,7 @@ from torch import autograd
 
 
 class Discriminator(nn.Module):
-    """
-    Discriminator neural network for adversarial motion priors (AMP) reward prediction.
+    """Discriminator neural network for adversarial motion priors (AMP) reward prediction.
     Adapted for RSL-RL v5.0.1.
     """
 
@@ -67,4 +66,3 @@ class Discriminator(nn.Module):
     def _lerp_reward(self, disc_r, task_r):
         r = (1.0 - self.task_reward_lerp) * disc_r + self.task_reward_lerp * task_r
         return r
-

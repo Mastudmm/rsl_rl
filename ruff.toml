@@ -31,16 +31,16 @@ select = [
     # ruff
     "RUF",
 ]
-ignore = ["B006",
-          "B007", 
-          "B028", 
-          "ANN401", 
-          "D100",
-          "D203",
-          "D213",
-          "D413",
+ignore = ["mutable-argument-default",
+          "unused-loop-control-variable", 
+          "no-explicit-stacklevel", 
+          "any-type", 
+          "undocumented-public-module",
+          "incorrect-blank-line-before-class",
+          "multi-line-summary-second-line",
+          "missing-blank-line-after-last-section",
 ]
-per-file-ignores = {"*/__init__.py" = ["F401"]}
+per-file-ignores = {"*/__init__.py" = ["unused-import"]}
 
 [lint.isort]
 # Order of imports

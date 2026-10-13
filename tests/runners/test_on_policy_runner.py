@@ -25,7 +25,7 @@ IMG_C, IMG_H, IMG_W = 1, 16, 16
 class DummyEnv(VecEnv):
     """Minimal VecEnv that returns random observations and rewards."""
 
-    def __init__(self, device: str = "cpu", include_image: bool = False) -> None:  # noqa: D107
+    def __init__(self, device: str = "cpu", include_image: bool = False) -> None:  # ruff: ignore[undocumented-public-init]
         self.num_envs = NUM_ENVS
         self.num_actions = NUM_ACTIONS
         self.max_episode_length = MAX_EP_LEN
@@ -34,13 +34,13 @@ class DummyEnv(VecEnv):
         self.cfg = {}
         self._include_image = include_image
 
-    def get_observations(self) -> TensorDict:  # noqa: D102
+    def get_observations(self) -> TensorDict:  # ruff: ignore[undocumented-public-method]
         data: dict = {"policy": torch.randn(self.num_envs, OBS_DIM, device=self.device)}
         if self._include_image:
             data["image"] = torch.randn(self.num_envs, IMG_C, IMG_H, IMG_W, device=self.device)
         return TensorDict(data, batch_size=[self.num_envs], device=self.device)
 
-    def step(self, actions: torch.Tensor) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:  # noqa: D102
+    def step(self, actions: torch.Tensor) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:  # ruff: ignore[undocumented-public-method]
         self.episode_length_buf += 1
         dones = (self.episode_length_buf >= self.max_episode_length).float()
         self.episode_length_buf[dones.bool()] = 0

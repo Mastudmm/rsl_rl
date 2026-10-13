@@ -5,8 +5,8 @@
 
 """Runners for environment-agent interaction."""
 
-from .on_policy_runner import OnPolicyRunner  # noqa: I001
+from .on_policy_runner import OnPolicyRunner  # ruff: ignore[unsorted-imports]
 from .distillation_runner import DistillationRunner
 from .amp_on_policy_runner import AmpOnPolicyRunner
 
-__all__ = ["DistillationRunner", "OnPolicyRunner", "AmpOnPolicyRunner"]
+__all__ = ["AmpOnPolicyRunner", "DistillationRunner", "OnPolicyRunner"]

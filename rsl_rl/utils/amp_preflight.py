@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import json
+import torch
 from pathlib import Path
 from typing import Any
-
-import torch
 
 from .motion_loader import AMPLoader
 
@@ -26,7 +25,6 @@ def validate_amp_pipeline(
     - motion file existence and basic JSON/frame validity
     - env AMP obs dim matches expert AMP obs dim
     """
-
     if not hasattr(env, "get_amp_obs_for_expert_trans"):
         raise ValueError(
             "AMP preflight failed: env is missing get_amp_obs_for_expert_trans(). "
@@ -44,7 +42,7 @@ def validate_amp_pipeline(
         raise ValueError("AMP preflight failed: env AMP obs contains NaN/Inf values.")
 
     env_obs_dim = int(env_amp_obs.shape[-1])
-    expert_obs_dim = int(getattr(amp_data, "observation_dim"))
+    expert_obs_dim = int(amp_data.observation_dim)
     if expected_obs_dim is not None and env_obs_dim != int(expected_obs_dim):
         raise ValueError(
             "AMP preflight failed: env AMP obs dim does not match configured "
@@ -61,15 +59,12 @@ def validate_amp_pipeline(
 
     missing_files = [f for f in motion_files if not Path(f).is_file()]
     if missing_files:
-        raise ValueError(
-            "AMP preflight failed: some motion files do not exist:\n"
-            + "\n".join(missing_files[:10])
-        )
+        raise ValueError("AMP preflight failed: some motion files do not exist:\n" + "\n".join(missing_files[:10]))
 
     warnings: list[str] = []
     scan_files = motion_files[: max(1, int(max_files_to_scan))]
     for path in scan_files:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         frames = data.get("Frames", None)
         if not isinstance(frames, list) or len(frames) < 2:
@@ -90,10 +85,7 @@ def validate_amp_pipeline(
                     "for amp_obs_dim=37."
                 )
         elif frame_dim != expert_obs_dim:
-            raise ValueError(
-                f"AMP preflight failed: '{path}' frame dim={frame_dim}, "
-                f"expected {expert_obs_dim}."
-            )
+            raise ValueError(f"AMP preflight failed: '{path}' frame dim={frame_dim}, expected {expert_obs_dim}.")
 
         sample = torch.tensor(frame0, dtype=torch.float32)
         if not torch.isfinite(sample).all():
