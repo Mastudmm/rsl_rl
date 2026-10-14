@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
-import git
+try:
+    import git  # type: ignore[import-untyped]
+except Exception:  # noqa: BLE001 - gitpython raises on nodes without a git binary
+    git = None  # type: ignore[assignment]
 import os
 import pathlib
 import statistics
